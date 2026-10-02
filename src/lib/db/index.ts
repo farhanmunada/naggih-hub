@@ -1,6 +1,15 @@
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
+import fs from "fs";
+
+if (!process.env.DATABASE_URL) {
+  if (fs.existsSync(".env.local")) {
+    process.loadEnvFile(".env.local");
+  } else if (fs.existsSync(".env")) {
+    process.loadEnvFile(".env");
+  }
+}
 
 const connectionString =
   process.env.DATABASE_URL ||
