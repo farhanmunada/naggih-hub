@@ -1,8 +1,15 @@
 import { db } from "./index";
 import { merchants, clients, invoices, invoiceItems } from "./schema";
+import { createSnapToken } from "../midtrans";
+import { eq } from "drizzle-orm";
 
 export async function seedDemoData() {
   console.log("Seeding demo data for NagihHub...");
+
+  // Clean existing demo data for idempotency
+  await db
+    .delete(merchants)
+    .where(eq(merchants.email, "billing@studiokreatif.id"));
 
   // 1. Create Demo Merchant
   const [merchant] = await db
@@ -33,17 +40,61 @@ export async function seedDemoData() {
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 3); // Due in 3 days
 
+  const invoiceNumber = `INV/${new Date().getFullYear()}${String(
+    new Date().getMonth() + 1
+  ).padStart(2, "0")}/${Date.now().toString().slice(-4)}`;
+
+  const totalAmount = 1750000;
+  let paymentToken = "demo-snap-token-12345";
+
+  // Request actual Midtrans Snap token if MIDTRANS_SERVER_KEY is configured
+  if (
+    process.env.MIDTRANS_SERVER_KEY &&
+    !process.env.MIDTRANS_SERVER_KEY.includes("xxxxxxxxxxxx")
+  ) {
+    try {
+      const snapRes = await createSnapToken({
+        orderId: invoiceNumber,
+        grossAmount: totalAmount,
+        items: [
+          {
+            id: "item-1",
+            name: "Jasa Redesign Landing Page Website",
+            price: 1500000,
+            quantity: 1,
+          },
+          {
+            id: "item-2",
+            name: "Setup Domain kustom & DNS Protection",
+            price: 250000,
+            quantity: 1,
+          },
+        ],
+        customer: {
+          first_name: client.name,
+          email: client.email || undefined,
+          phone: client.phoneWa,
+        },
+      });
+      paymentToken = snapRes.token;
+      console.log("Generated live Midtrans Snap Token:", paymentToken);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("Could not request Midtrans token, using fallback:", msg);
+    }
+  }
+
   const [invoice] = await db
     .insert(invoices)
     .values({
       merchantId: merchant.id,
       clientId: client.id,
-      invoiceNumber: "INV/202610/0001",
+      invoiceNumber,
       publicHash: "demo-hash",
-      totalAmount: "1750000.00",
+      totalAmount: totalAmount.toFixed(2),
       dueDate: dueDate.toISOString().split("T")[0],
       status: "PENDING",
-      paymentToken: "demo-snap-token-12345",
+      paymentToken,
     })
     .returning();
 
