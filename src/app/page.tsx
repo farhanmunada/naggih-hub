@@ -6,7 +6,7 @@ import {
   ShieldCheck,
   ArrowRight,
   Database,
-  ExternalLink,
+  LayoutDashboard,
 } from "lucide-react";
 
 export default function HomePage() {
@@ -25,9 +25,13 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="text-xs px-2.5 py-1 rounded-md bg-slate-100 text-slate-700 font-mono border border-slate-200">
-              v1.0 (Next.js + Neon DB)
-            </span>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-primary hover:bg-slate-800 text-white font-medium text-xs sm:text-sm transition-colors shadow-sm"
+            >
+              <LayoutDashboard className="w-4 h-4" />
+              <span>Buka Dashboard</span>
+            </Link>
           </div>
         </div>
       </header>
@@ -51,21 +55,19 @@ export default function HomePage() {
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Link
-            href="/pay/demo-hash"
+            href="/dashboard"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary text-white font-medium text-sm hover:bg-slate-800 transition-colors shadow-sm"
           >
-            <span>Lihat Contoh Invoice Publik</span>
+            <LayoutDashboard className="w-4 h-4" />
+            <span>Masuk ke Dashboard Penagihan</span>
             <ArrowRight className="w-4 h-4" />
           </Link>
-          <a
-            href="https://github.com"
-            target="_blank"
-            rel="noreferrer"
+          <Link
+            href="/pay/demo-hash"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white border border-border text-foreground font-medium text-sm hover:bg-slate-50 transition-colors"
           >
-            <span>Dokumentasi API</span>
-            <ExternalLink className="w-4 h-4 text-slate-400" />
-          </a>
+            <span>Lihat Contoh Invoice Klien</span>
+          </Link>
         </div>
       </section>
 

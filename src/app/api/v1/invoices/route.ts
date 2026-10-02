@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { invoices, invoiceItems, clients, merchants } from "@/lib/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import {
   generateInvoiceNumber,
   generatePublicHash,
@@ -14,8 +14,13 @@ import { sendWhatsAppMessage, formatNewInvoiceMessage } from "@/lib/whatsapp";
 export const dynamic = "force-dynamic";
 
 export interface CreateInvoiceRequestBody {
-  merchantId: string;
-  clientId: string;
+  merchantId?: string;
+  clientId?: string;
+  client?: {
+    name: string;
+    phoneWa: string;
+    email?: string;
+  };
   dueDate: string; // YYYY-MM-DD
   items: Array<{
     description: string;
@@ -24,38 +29,98 @@ export interface CreateInvoiceRequestBody {
   }>;
 }
 
+export async function GET() {
+  try {
+    const allInvoices = await db
+      .select({
+        invoice: invoices,
+        client: clients,
+        merchant: merchants,
+      })
+      .from(invoices)
+      .innerJoin(clients, eq(invoices.clientId, clients.id))
+      .innerJoin(merchants, eq(invoices.merchantId, merchants.id))
+      .orderBy(desc(invoices.createdAt));
+
+    return NextResponse.json({ success: true, data: allInvoices });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error("[Invoices API] Failed to fetch invoices:", errorMsg);
+    return NextResponse.json(
+      { error: "Internal server error fetching invoices" },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body: CreateInvoiceRequestBody = await req.json();
 
-    if (!body.merchantId || !body.clientId || !body.dueDate || !body.items?.length) {
+    if ((!body.clientId && !body.client?.name) || !body.dueDate || !body.items?.length) {
       return NextResponse.json(
-        { error: "Missing required invoice fields (merchantId, clientId, dueDate, items)" },
+        { error: "Missing required invoice fields (client/clientId, dueDate, items)" },
         { status: 400 }
       );
     }
 
-    // 1. Fetch Merchant and Client
-    const [merchant] = await db
-      .select()
-      .from(merchants)
-      .where(eq(merchants.id, body.merchantId))
-      .limit(1);
+    // 1. Fetch Merchant (or fallback to first available merchant)
+    let merchant;
+    if (body.merchantId) {
+      const [m] = await db
+        .select()
+        .from(merchants)
+        .where(eq(merchants.id, body.merchantId))
+        .limit(1);
+      merchant = m;
+    } else {
+      const [m] = await db.select().from(merchants).limit(1);
+      merchant = m;
+    }
 
-    const [client] = await db
-      .select()
-      .from(clients)
-      .where(eq(clients.id, body.clientId))
-      .limit(1);
+    if (!merchant) {
+      // Auto-create a default merchant if none exists
+      const [newMerchant] = await db
+        .insert(merchants)
+        .values({
+          businessName: "Bisnis Saya",
+          email: "merchant@nagihhub.id",
+          phoneWa: "6281234567890",
+        })
+        .returning();
+      merchant = newMerchant;
+    }
 
-    if (!merchant || !client) {
+    // 2. Fetch or Create Client
+    let client;
+    if (body.clientId) {
+      const [c] = await db
+        .select()
+        .from(clients)
+        .where(eq(clients.id, body.clientId))
+        .limit(1);
+      client = c;
+    } else if (body.client) {
+      const [newClient] = await db
+        .insert(clients)
+        .values({
+          merchantId: merchant.id,
+          name: body.client.name,
+          phoneWa: body.client.phoneWa,
+          email: body.client.email || null,
+        })
+        .returning();
+      client = newClient;
+    }
+
+    if (!client) {
       return NextResponse.json(
-        { error: "Merchant or Client not found" },
-        { status: 404 }
+        { error: "Client information is invalid" },
+        { status: 400 }
       );
     }
 
-    // 2. Calculate Items Subtotals and Total Amount
+    // 3. Calculate Items Subtotals and Total Amount
     let total = 0;
     const computedItems = body.items.map((item) => {
       const qty = Math.max(1, item.quantity);
@@ -70,7 +135,7 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // 3. Generate Sequence & Invoice Number
+    // 4. Generate Sequence & Invoice Number
     const countResult = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(invoices)
@@ -80,10 +145,13 @@ export async function POST(req: NextRequest) {
     const invoiceNumber = generateInvoiceNumber(sequence);
     const publicHash = generatePublicHash();
 
-    // 4. Request Midtrans Snap Token (Sandbox)
+    // 5. Request Midtrans Snap Token (Sandbox)
     let paymentToken: string | null = null;
-    try {
-      if (process.env.MIDTRANS_SERVER_KEY) {
+    if (
+      process.env.MIDTRANS_SERVER_KEY &&
+      !process.env.MIDTRANS_SERVER_KEY.includes("xxxxxxxxxxxx")
+    ) {
+      try {
         const snapRes = await createSnapToken({
           orderId: invoiceNumber,
           grossAmount: total,
@@ -100,12 +168,12 @@ export async function POST(req: NextRequest) {
           },
         });
         paymentToken = snapRes.token;
+      } catch (snapErr) {
+        console.warn("[Invoice] Midtrans token generation skipped or failed:", snapErr);
       }
-    } catch (snapErr) {
-      console.warn("[Invoice] Midtrans token generation skipped or failed:", snapErr);
     }
 
-    // 5. Insert Invoice & Items into DB
+    // 6. Insert Invoice & Items into DB
     const [newInvoice] = await db
       .insert(invoices)
       .values({
@@ -132,7 +200,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 6. Dispatch WhatsApp notification to client
+    // 7. Dispatch WhatsApp notification to client
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const paymentUrl = `${appUrl}/pay/${publicHash}`;
 
